@@ -129,6 +129,27 @@ def _formatBiorxiv(result):
 }}
 '''
 
+BIORXIV_API_URL = 'https://api.biorxiv.org/details/{server}/{doi}/na/json'
+
+def getReferenceFromBiorxivURL(url):
+    '''Fetch BibTeX for a bioRxiv or medRxiv URL by extracting the DOI.'''
+    m = re.search(r'(10\.\d{4}/\S+?)(?:v\d+)?$', url)
+    if not m:
+        return None
+    doi = m.group(1)
+    server = 'medrxiv' if 'medrxiv' in url else 'biorxiv'
+    data = requests.get(BIORXIV_API_URL.format(server=server, doi=doi)).json()
+    collection = data.get('collection', [])
+    if not collection:
+        return None
+    result = collection[-1]   # latest version
+    # normalise fields to match _formatBiorxiv expectations
+    result.setdefault('journalTitle', server)
+    result['pubYear'] = result.get('date', '')[:4]
+    result['authorString'] = result.get('authors', '')
+    result['doi'] = doi
+    return _formatBiorxiv(result)
+
 # Get a reference from PubMed database
 def getReference(id):
     url_format = 'https://api.ncbi.nlm.nih.gov/lit/ctxp/v1/pubmed/'
@@ -259,6 +280,7 @@ def convertReferences(input_file, output_file, use_short=False):
 
 @click.command()
 @click.option('-i','--id', default=None, help="The PubMed PMID.")
+@click.option('-u','--url', default=None, help='bioRxiv/medRxiv URL, e.g. https://www.biorxiv.org/content/10.1101/...')
 @click.option('-q','--query', default=None, help='Keyword search, e.g. "segmental duplications eichler"')
 @click.option('--input-file', default=None, help='A text file with list of PMIDs or keyword queries (one per line)')
 @click.option('--output-file', default=None, help='The output file to store BibTex styled references')
@@ -268,11 +290,21 @@ def convertReferences(input_file, output_file, use_short=False):
 @click.option('--source', default='pubmed', show_default=True,
               type=click.Choice(['pubmed', 'biorxiv'], case_sensitive=False),
               help='Database to search')
-def pubMed2BibTex(id, query, input_file, output_file, short_journal, max_results, rank, source):
+def pubMed2BibTex(id, url, query, input_file, output_file, short_journal, max_results, rank, source):
     '''
     Retrieve article reference from PubMed in BibTex format.
     '''
-    if id:
+    if url:
+        bibtex = getReferenceFromBiorxivURL(url)
+        if not bibtex:
+            click.echo('Could not retrieve reference from URL.')
+            return
+        if output_file:
+            with open(output_file, 'a') as f:
+                f.write(bibtex)
+        else:
+            click.echo(bibtex)
+    elif id:
         if output_file:
             saveReference(id, output_file, short_journal)
         else:
